@@ -45,7 +45,7 @@ def main():
 
     # --- Animation Setup using FuncAnimation ---
     print("Starting simulation loop...")
-    time.sleep(5)
+
     # The update function for the animation. 'frame' is the step number.
     def update(frame):
         # Compute control input for all agents

@@ -8,7 +8,7 @@ import matplotlib.patches as patches
 import matplotlib.ticker as mticker
 import numpy as np
 import config
-import protocol  # <-- This is the added line to fix the error
+import protocol
 
 
 class Visualizer:
@@ -46,14 +46,16 @@ class Visualizer:
         self.ax_main.set_xlim(-2.5, 40)
         self.ax_main.set_ylim(-2.5, 20)
 
+        for ax in [self.ax_decrypted, self.ax_encrypted, self.ax_min_dist, self.ax_pos_error, self.ax_vel_error]:
+            ax.tick_params(axis='x', labelbottom=False)
         # --- Configure Subplots ---
         self.ax_formation.set_title("Expected Formation", fontsize='small')
         self.ax_formation.set_aspect('equal', adjustable='box')
         self.ax_formation.axis('off')
 
-        self.ax_decrypted.set_title("Decrypted Data (D1, D2)", fontsize='small')
+        self.ax_decrypted.set_title("Decrypted Data D1, D2 (between A1, A5)", fontsize='small')
         self.ax_decrypted.grid(True)
-        self.ax_encrypted.set_title("Encrypted Data (E1, E2)", fontsize='small')
+        self.ax_encrypted.set_title("Encrypted Data E1, E2 (between A1, A5)", fontsize='small')
         self.ax_encrypted.grid(True)
         formatter = mticker.ScalarFormatter(useMathText=True)
         formatter.set_powerlimits((-3, 3))
@@ -85,6 +87,10 @@ class Visualizer:
             self.ax_main.add_patch(rect)
             target_pos = np.array(config.FORMATION_TARGETS[i][:2])
             self.ax_formation.plot(target_pos[0], target_pos[1], '*', color=self.colors[i], markersize=8)
+            # --- ADDED: Agent labels on the formation plot ---
+            self.ax_formation.text(target_pos[0] + 0.5, target_pos[1], f'A{i+1}',
+                                   color='black', fontsize='small', ha='left', va='center')
+
 
         for i in range(num_agents):
             for j in range(i + 1, num_agents):
@@ -104,7 +110,6 @@ class Visualizer:
         self.ax_decrypted.legend(fontsize='x-small')
         self.ax_encrypted.legend(fontsize='x-small')
 
-        # --- THIS IS THE CORRECTED SECTION ---
         # Using full keyword arguments for Line2D
         agent_handles = [plt.Line2D([0], [0], color=self.colors[i], marker='o', linestyle='-',
                                     markersize=4, label=f'A{i+1}') for i in range(num_agents)]
@@ -123,7 +128,7 @@ class Visualizer:
             # This works for many backends like TkAgg to position the window
             mngr = plt.get_current_fig_manager()
             # The geometry string "+0-0" is a common way to specify bottom-left
-            mngr.window.wm_geometry("+0+3")
+            mngr.window.wm_geometry("+0+2")
         except Exception:
             # If the backend does not support this, the window will appear
             # at the default position, which is an acceptable fallback.

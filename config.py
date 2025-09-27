@@ -4,7 +4,7 @@
 import numpy as np
 
 # --- Simulation Parameters ---
-SIMULATION_STEPS = 200   # Total number of steps to run the simulation
+SIMULATION_STEPS = 300   # Total number of steps to run the simulation
 TIME_STEP = 0.05         # Duration of each simulation step
 
 # --- Cryptography Parameters ---

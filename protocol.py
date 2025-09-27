@@ -4,6 +4,7 @@
 import numpy as np
 import random
 import config
+from phe import paillier
 
 # --- Global state for Chatter Attenuation and Data Logging ---
 protocol_state = {}
@@ -36,7 +37,7 @@ def secure_PPDD(agent_A, vector_a, agent_B, vector_b, interaction_type=None):
     Q_squared = Q ** 2
 
     # --- Number Encoding (formerly NIPE) ---
-    # The logic is now integrated here to create common denominators for each vector,
+    # The logic is integrated here to create common denominators for each vector,
     # which is crucial for the math to work correctly. A large random scaler
     # is used to achieve the desired 10^36 magnitude for D1/D2.
 
@@ -72,6 +73,7 @@ def secure_PPDD(agent_A, vector_a, agent_B, vector_b, interaction_type=None):
     D2 = priv_key_A.decrypt(E2)
 
     # Data Logging for Visualization
+    # Use 0-based indexing for agents 1 (index 0) and 5 (index 4)
     agent_ids = {agent_A.id, agent_B.id}
     if agent_ids == {0, 4} and interaction_type == 's_tilde':
         protocol_state['latest_E1'] = E1.ciphertext(be_secure=False)
@@ -92,7 +94,7 @@ def secure_PPDD(agent_A, vector_a, agent_B, vector_b, interaction_type=None):
 
 def compute_all_control_inputs(agents, adj_matrix, step):
     """
-    Computes control inputs for all agents using the secure PPDD protocol.
+    Computes control inputs for all agents, with forced topology updates.
     """
     num_agents = len(agents)
     if step == 0:
@@ -105,54 +107,61 @@ def compute_all_control_inputs(agents, adj_matrix, step):
     new_control_inputs = {}
 
     for i, agent_i in enumerate(agents):
-        collision_neighbors_ids = set()
         u_collision_avoidance = np.zeros(2)
-
-        for j, agent_j in enumerate(agents):
-            if i == j: continue
-            if np.linalg.norm(agent_j.position - agent_i.position, ord=np.inf) < config.D:
-                collision_neighbors_ids.add(j)
-                unit_vector_p = secure_PPDD(agent_j, agent_j.position, agent_i, agent_i.position,
-                                            interaction_type='position')
-                u_collision_avoidance -= config.GAMMA * unit_vector_p
-
-        for neighbor_id in range(num_agents):
-            if i == neighbor_id: continue
-            is_colliding = neighbor_id in collision_neighbors_ids
-            is_neighbor = adj_matrix[i, neighbor_id] == 1
-            if is_colliding or not is_neighbor:
-                protocol_state['c_counter'][i, neighbor_id] = 0
-                protocol_state['beta_matrix'][i, neighbor_id] = config.BETA_IJ
-
         u_formation = -config.ALPHA * agent_i.v_tilde
         sum_term_s = np.zeros(2)
-        communication_neighbors = np.where(adj_matrix[i] == 1)[0]
 
-        for j in communication_neighbors:
-            if j in collision_neighbors_ids:
+        for j, agent_j in enumerate(agents):
+            if i == j:
                 continue
 
-            agent_j = agents[j]
-            dua_current = secure_PPDD(agent_j, agent_j.s_tilde, agent_i, agent_i.s_tilde, interaction_type='s_tilde')
+            # Determine the relationship between agent i and j for this step
+            is_static_neighbor = adj_matrix[i, j] == 1
+            is_colliding = np.linalg.norm(agent_j.position - agent_i.position, ord=np.inf) < config.D
 
-            if step > 1:
-                dua_k1 = protocol_state['dua_history_k1'][i, j]
-                dua_k2 = protocol_state['dua_history_k2'][i, j]
-                du_k = dua_current - dua_k1
-                du_k1 = dua_k1 - dua_k2
-                if np.dot(du_k, du_k1) < config.THETA:
-                    protocol_state['c_counter'][i, j] += 1
+            # --- Forced Topology Logic ---
+            # Formation force is applied if they are static neighbors NOT colliding,
+            # OR if they are NOT static neighbors but ARE colliding.
+            apply_formation_force = (is_static_neighbor and not is_colliding) or \
+                                    (not is_static_neighbor and is_colliding)
 
-            beta_ij = config.BETA_IJ * (config.KAPPA ** protocol_state['c_counter'][i, j])
-            protocol_state['beta_matrix'][i, j] = beta_ij
-            sum_term_s += beta_ij * dua_current
+            if apply_formation_force:
+                dua_current = secure_PPDD(agent_j, agent_j.s_tilde, agent_i, agent_i.s_tilde,
+                                          interaction_type='s_tilde')
 
-            protocol_state['dua_history_k2'][i, j] = protocol_state['dua_history_k1'][i, j]
-            protocol_state['dua_history_k1'][i, j] = dua_current
+                # --- Chatter Attenuation Mechanism ---
+                if step > 1:
+                    dua_k1 = protocol_state['dua_history_k1'][i, j]
+                    dua_k2 = protocol_state['dua_history_k2'][i, j]
+                    du_k = dua_current - dua_k1
+                    du_k1 = dua_k1 - dua_k2
+                    if np.dot(du_k, du_k1) < config.THETA:
+                        protocol_state['c_counter'][i, j] += 1
+
+                beta_ij = config.BETA_IJ * (config.KAPPA ** protocol_state['c_counter'][i, j])
+                protocol_state['beta_matrix'][i, j] = beta_ij
+                sum_term_s += beta_ij * dua_current
+
+                # Update history
+                protocol_state['dua_history_k2'][i, j] = protocol_state['dua_history_k1'][i, j]
+                protocol_state['dua_history_k1'][i, j] = dua_current
+            else:
+                # Reset chatter if the formation force is not being applied
+                protocol_state['c_counter'][i, j] = 0
+                protocol_state['beta_matrix'][i, j] = config.BETA_IJ
+
+            # --- Collision Avoidance Component ---
+            if is_colliding:
+                unit_vector_p = secure_PPDD(agent_j, agent_j.position, agent_i, agent_i.position,
+                                            interaction_type='position')
+                # The force on agent 'i' should push it away from 'j', so it is in the direction of -(p_j - p_i)
+                # PPDD(j, p_j, i, p_i) gives direction of (p_j - p_i), so we subtract.
+                u_collision_avoidance -= config.GAMMA * unit_vector_p
 
         u_formation += sum_term_s
         new_control_inputs[i] = u_formation + u_collision_avoidance
 
+    # Apply the computed control inputs to all agents
     for i, agent in enumerate(agents):
         agent.control_input = new_control_inputs[i]
 
